@@ -1,23 +1,23 @@
 <#
 .SYNOPSIS
-Ensures that the local Codex Usage Monitor service is running.
+Ensures that the local Agent Usage Monitor service and taskbar indicator are running.
 #>
 
-param([switch]$Open, [switch]$NoWidget)
+param([switch]$Open, [switch]$NoTaskbar)
 
 $ErrorActionPreference = 'Stop'
 $port = 47831
 $baseUrl = "http://127.0.0.1:$port"
 $root = Split-Path -Parent $PSScriptRoot
 $server = Join-Path $root 'src\server.mjs'
-$logRoot = Join-Path $env:LOCALAPPDATA 'CodexUsageMonitor'
+$logRoot = Join-Path $env:LOCALAPPDATA 'AgentUsageMonitor'
 $stdoutLog = Join-Path $logRoot 'service.log'
 $stderrLog = Join-Path $logRoot 'service-error.log'
 
 function Get-MonitorHealth {
     try {
         $health = Invoke-RestMethod -Uri "$baseUrl/api/health" -TimeoutSec 2
-        if ($health.app -eq 'codex-usage-monitor') {
+        if ($health.app -eq 'agent-usage-monitor') {
             return $health
         }
     }
@@ -42,17 +42,16 @@ if (-not $health) {
     [Environment]::SetEnvironmentVariable('Path', $processPath, [EnvironmentVariableTarget]::Process)
 
     Start-Process -FilePath $node `
-        -ArgumentList @("`"$server`"", '--port', [string]$port) `
+        -ArgumentList @('--no-warnings', "`"$server`"", '--port', [string]$port) `
         -WorkingDirectory $root `
         -WindowStyle Hidden `
         -RedirectStandardOutput $stdoutLog `
         -RedirectStandardError $stderrLog
-
 }
 
-# The HTTP listener opens before the initial rollout scan is complete. Wait for
-# the scanner as well so callers never mistake a partial database for readiness.
-$deadline = [DateTime]::UtcNow.AddSeconds(60)
+# The HTTP listener opens before the initial scans are complete. Wait for
+# the scanners as well so callers never mistake a partial database for readiness.
+$deadline = [DateTime]::UtcNow.AddSeconds(90)
 while ((-not $health -or $health.state -ne 'watching') -and [DateTime]::UtcNow -lt $deadline) {
     if ($health -and $health.state -eq 'error') {
         break
@@ -69,11 +68,11 @@ if (-not $health -or $health.state -ne 'watching') {
         'No service error log was created.'
     }
     $state = if ($health) { $health.state } else { 'unreachable' }
-    throw "Codex Usage Monitor did not become ready on port $port (state: $state). $detail"
+    throw "Agent Usage Monitor did not become ready on port $port (state: $state). $detail"
 }
 
-if (-not $NoWidget) {
-    & (Join-Path $PSScriptRoot 'Start-Widget.ps1')
+if (-not $NoTaskbar) {
+    & (Join-Path $PSScriptRoot 'Start-Taskbar.ps1') -Port $port
 }
 
 if ($Open) {

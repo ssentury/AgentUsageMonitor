@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 
 export const priceFields = ['inputPerMillion', 'cachedInputPerMillion', 'outputPerMillion',
-  'cacheWritePerMillion', 'longContextThresholdTokens', 'longContextInputMultiplier', 'longContextOutputMultiplier'];
+  'cacheWritePerMillion', 'cacheWrite1hPerMillion', 'longContextThresholdTokens', 'longContextInputMultiplier', 'longContextOutputMultiplier'];
 
 export function validateModels(models) {
   if (!models || typeof models !== 'object' || Array.isArray(models) || Object.keys(models).length > 2000) {
@@ -38,6 +38,14 @@ export function isPriced(rate) {
     .every((key) => typeof rate[key] === 'number' && Number.isFinite(rate[key]) && rate[key] >= 0);
 }
 
+// Exact IDs win; dated snapshots such as claude-haiku-4-5-20251001 fall back to their alias.
+export function findRate(model, rateCard) {
+  const models = rateCard.models || {};
+  if (Object.hasOwn(models, model)) return models[model];
+  const alias = String(model || '').replace(/-\d{8}$/, '');
+  return alias !== model && Object.hasOwn(models, alias) ? models[alias] : undefined;
+}
+
 export class PriceCatalog {
   constructor(defaults, filePath) {
     this.defaults = defaults;
@@ -51,6 +59,8 @@ export class PriceCatalog {
     for (const [model, value] of Object.entries(overrides)) {
       if (value === null) continue;
       const rate = { ...value };
+      // Credits only exist for Codex plans; Claude overrides stay USD-only.
+      if (/^claude-/i.test(model)) { models[model] = rate; continue; }
       for (const kind of ['Input', 'CachedInput', 'Output', 'CacheWrite']) {
         const key = kind[0].toLowerCase() + kind.slice(1) + 'PerMillion';
         if (rate[key] != null) rate[`credits${kind}PerMillion`] = rate[key] * 25;
@@ -78,11 +88,12 @@ export class PriceCatalog {
   }
 
   snapshot(detected) {
-    const rates = this.rateCard().models;
+    const card = this.rateCard();
+    const rates = card.models;
     const seen = new Map(detected.map((row) => [row.model, row.calls]));
     return { version: 1, creditsPerUsd: 25, models: [...new Set([...Object.keys(rates), ...seen.keys()])]
-      .filter(Boolean).map((model) => ({ model, rate: rates[model] || {}, calls: seen.get(model) || 0,
-        priced: isPriced(rates[model]), source: Object.hasOwn(this.overrides, model) ? 'custom' : Object.hasOwn(this.defaults.models, model) ? 'bundled' : 'detected',
+      .filter(Boolean).map((model) => ({ model, rate: rates[model] || findRate(model, card) || {}, calls: seen.get(model) || 0,
+        priced: isPriced(findRate(model, card)), source: Object.hasOwn(this.overrides, model) ? 'custom' : Object.hasOwn(this.defaults.models, model) ? 'bundled' : 'detected',
         hasDefault: Object.hasOwn(this.defaults.models, model) }))
       .sort((a, b) => Number(a.priced) - Number(b.priced) || a.model.localeCompare(b.model)) };
   }

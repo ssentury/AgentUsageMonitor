@@ -2,11 +2,14 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 
-import { applyRecord, createParserState, parseJsonLine, sessionMetadata } from './parser.mjs';
+import { parseJsonLine } from './parsers/common.mjs';
 
+// Tails one provider's JSONL directory into the shared database.
 export class SessionScanner {
-  constructor({ sessionsRoot, lookbackDays, database, onChange, logger = console }) {
-    this.sessionsRoot = sessionsRoot;
+  constructor({ parser, root, lookbackDays, database, onChange, logger = console }) {
+    this.parser = parser;
+    this.provider = parser.provider;
+    this.sessionsRoot = root;
     this.lookbackDays = lookbackDays;
     this.database = database;
     this.onChange = onChange;
@@ -17,6 +20,8 @@ export class SessionScanner {
     this.fullScanTimer = null;
     this.pendingTimer = null;
     this.status = {
+      provider: parser.provider,
+      root,
       state: 'starting',
       scannedFiles: 0,
       parsedRecords: 0,
@@ -92,7 +97,7 @@ export class SessionScanner {
     }
     if (changed) {
       this.database.reconcileAttributions();
-      this.onChange?.();
+      this.onChange?.(this.provider);
     }
   }
 
@@ -124,7 +129,7 @@ export class SessionScanner {
     const lastNewline = buffer.lastIndexOf(0x0a);
     if (lastNewline < 0) return false;
     const complete = buffer.subarray(0, lastNewline + 1);
-    const state = createParserState({
+    const state = this.parser.createState({
       sessionId: saved?.session_id,
       currentTurnId: saved?.current_turn_id,
       currentModel: saved?.current_model,
@@ -149,13 +154,9 @@ export class SessionScanner {
         }
         records += 1;
 
-        const metadata = sessionMetadata(record, filePath);
-        if (metadata) {
-          state.sessionId = metadata.id;
-          this.database.applySession(metadata);
-        }
-        for (const action of applyRecord(record, state)) {
-          this.database.applyAction(action, `${filePath}:${lineOffset}`);
+        for (const action of this.parser.parse(record, state, filePath)) {
+          if (action.type === 'session') this.database.applySession(action.metadata);
+          else this.database.applyAction(action, action.eventId || `${filePath}:${lineOffset}`);
         }
       }
 

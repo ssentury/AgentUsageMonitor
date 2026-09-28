@@ -13,3 +13,5 @@ widget-status.json
 widget-preferences.json
 widget-preview.png
 backups/
+taskbar/bin/
+taskbar/obj/

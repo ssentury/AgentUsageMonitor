@@ -1,10 +1,10 @@
 {
-  "name": "codex-usage-monitor",
-  "version": "0.1.0",
+  "name": "agent-usage-monitor",
+  "version": "0.2.0",
   "license": "MIT",
   "private": true,
   "type": "module",
-  "description": "Local-only live usage monitor for Codex Desktop and CLI sessions.",
+  "description": "Local-only usage monitor and Windows taskbar indicator for Claude Code and Codex.",
   "scripts": {
     "start": "node src/server.mjs",
     "test": "node --test"

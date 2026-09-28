@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Model prices · Codex Usage Monitor</title><link rel="stylesheet" href="/styles.css?v=catalog-1"><link rel="stylesheet" href="/prices.css?v=catalog-1"></head>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Model prices · Agent Usage Monitor</title><link rel="stylesheet" href="/styles.css?v=agents-1"><link rel="stylesheet" href="/prices.css?v=catalog-1"></head>
 <body>
 <main class="catalog-shell">
   <header class="catalog-header"><div><a href="/" class="back">← Dashboard</a><h1>Model prices</h1><p>Models appear automatically. You only fill in the prices.</p></div><div class="actions"><button id="export">Export</button><button id="import">Import</button><input id="import-file" type="file" accept=".json,application/json" hidden></div></header>
@@ -22,14 +22,15 @@
         <p class="hint">Fill all three to calculate cost. Empty means unknown; 0 means free.</p>
         <details><summary>Advanced pricing <span>Cache writes & long context</span></summary><div class="advanced-fields">
           <label>Cache writes · USD / 1M<input name="cacheWritePerMillion" type="number" min="0" max="1000000000" step="any" placeholder="Uses input price"></label>
+          <label>1-hour cache writes (Claude) · USD / 1M<input name="cacheWrite1hPerMillion" type="number" min="0" max="1000000000" step="any" placeholder="Uses cache write price"></label>
           <label>Long-context threshold · tokens<input name="longContextThresholdTokens" type="number" min="1" max="1000000000" step="1" placeholder="Disabled"></label>
           <label>Input & cache multiplier<input name="longContextInputMultiplier" type="number" min="0.000001" max="1000000000" step="any" placeholder="1"></label>
           <label>Output multiplier<input name="longContextOutputMultiplier" type="number" min="0.000001" max="1000000000" step="any" placeholder="1"></label>
         </div><p class="hint">Multipliers apply above the input-token threshold.</p></details>
-        <div class="pricing-note">API-equivalent estimate · credits use 25 credits / USD.</div>
+        <div class="pricing-note">API-equivalent estimate · Codex credits use 25 credits / USD.</div>
         <footer class="editor-footer"><p>Saving recalculates existing usage too.<br><span id="dirty-state">No unsaved changes</span></p><div class="actions"><button id="reset" type="button">Use bundled prices</button><button id="save" type="submit" class="primary">Save prices</button></div></footer>
       </form>
     </section>
   </div>
-</main><script type="module" src="/prices.js?v=catalog-1"></script>
+</main><script type="module" src="/prices.js?v=agents-1"></script>
 </body></html>

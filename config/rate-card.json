@@ -1,8 +1,11 @@
 {
   "source": {
-    "name": "Official OpenAI API model pricing; credits use the existing 25 credits/USD conversion",
-    "url": "https://developers.openai.com/api/docs/pricing",
-    "effectiveAt": "2026-09-24"
+    "name": "Official OpenAI and Anthropic API model pricing; Codex credits use the existing 25 credits/USD conversion",
+    "url": [
+      "https://developers.openai.com/api/docs/pricing",
+      "https://platform.claude.com/docs/en/about-claude/pricing"
+    ],
+    "effectiveAt": "2026-09-28"
   },
   "models": {
     "gpt-5.5": {
@@ -95,6 +98,76 @@
       "longContextThresholdTokens": 272000,
       "longContextInputMultiplier": 2,
       "longContextOutputMultiplier": 1.5
+    },
+    "claude-fable-5-1": {
+      "inputPerMillion": 10,
+      "cachedInputPerMillion": 0.25,
+      "cacheWritePerMillion": 12.5,
+      "cacheWrite1hPerMillion": 20,
+      "outputPerMillion": 50
+    },
+    "claude-fable-5": {
+      "inputPerMillion": 10,
+      "cachedInputPerMillion": 1,
+      "cacheWritePerMillion": 12.5,
+      "cacheWrite1hPerMillion": 20,
+      "outputPerMillion": 50
+    },
+    "claude-opus-5-5": {
+      "inputPerMillion": 4,
+      "cachedInputPerMillion": 0.2,
+      "cacheWritePerMillion": 5.0,
+      "cacheWrite1hPerMillion": 8,
+      "outputPerMillion": 20
+    },
+    "claude-opus-5": {
+      "inputPerMillion": 5,
+      "cachedInputPerMillion": 0.5,
+      "cacheWritePerMillion": 6.25,
+      "cacheWrite1hPerMillion": 10,
+      "outputPerMillion": 25
+    },
+    "claude-opus-4-8": {
+      "inputPerMillion": 5,
+      "cachedInputPerMillion": 0.5,
+      "cacheWritePerMillion": 6.25,
+      "cacheWrite1hPerMillion": 10,
+      "outputPerMillion": 25
+    },
+    "claude-opus-4-7": {
+      "inputPerMillion": 5,
+      "cachedInputPerMillion": 0.5,
+      "cacheWritePerMillion": 6.25,
+      "cacheWrite1hPerMillion": 10,
+      "outputPerMillion": 25
+    },
+    "claude-opus-4-6": {
+      "inputPerMillion": 5,
+      "cachedInputPerMillion": 0.5,
+      "cacheWritePerMillion": 6.25,
+      "cacheWrite1hPerMillion": 10,
+      "outputPerMillion": 25
+    },
+    "claude-sonnet-5": {
+      "inputPerMillion": 2,
+      "cachedInputPerMillion": 0.2,
+      "cacheWritePerMillion": 2.5,
+      "cacheWrite1hPerMillion": 4,
+      "outputPerMillion": 10
+    },
+    "claude-sonnet-4-6": {
+      "inputPerMillion": 3,
+      "cachedInputPerMillion": 0.3,
+      "cacheWritePerMillion": 3.75,
+      "cacheWrite1hPerMillion": 6,
+      "outputPerMillion": 15
+    },
+    "claude-haiku-4-5": {
+      "inputPerMillion": 1,
+      "cachedInputPerMillion": 0.1,
+      "cacheWritePerMillion": 1.25,
+      "cacheWrite1hPerMillion": 2,
+      "outputPerMillion": 5
     }
   }
 }

@@ -2,27 +2,24 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 
-import {
-  APP_NAME,
-  APP_VERSION,
-  PUBLIC_DIRECTORY,
-  RATE_CARD_PATH,
-  ROOT_DIRECTORY,
-  resolveConfiguration,
-} from './config.mjs';
+import { APP_NAME, APP_VERSION, PUBLIC_DIRECTORY, RATE_CARD_PATH, resolveConfiguration } from './config.mjs';
 import { UsageDatabase } from './database.mjs';
 import { loadRateCard } from './pricing.mjs';
 import { PriceCatalog } from './catalog.mjs';
 import { SessionScanner } from './scanner.mjs';
-import { normalizeWidgetHistoryMinutes, runningModels, widgetSnapshot } from './widget.mjs';
+import { ClaudeLimitPoller } from './claude-limits.mjs';
+import { taskbarSnapshot } from './taskbar.mjs';
+import { codexParser } from './parsers/codex.mjs';
+import { claudeParser } from './parsers/claude.mjs';
+
+const PARSERS = { codex: codexParser, claude: claudeParser };
 
 const configuration = resolveConfiguration();
 await fsp.mkdir(configuration.stateRoot, { recursive: true });
+migrateLegacyPrices();
 const catalog = new PriceCatalog(loadRateCard(RATE_CARD_PATH), path.join(configuration.stateRoot, 'price-overrides.json'));
-const rateCard = catalog.rateCard();
-const database = new UsageDatabase(configuration.databasePath, rateCard);
+const database = new UsageDatabase(configuration.databasePath, catalog.rateCard());
 const eventClients = new Set();
 let revision = 0;
 
@@ -32,12 +29,32 @@ const notifyClients = () => {
   for (const response of eventClients) response.write(message);
 };
 
-const scanner = new SessionScanner({
-  sessionsRoot: configuration.sessionsRoot,
-  lookbackDays: configuration.lookbackDays,
-  database,
+const claudeLimits = new ClaudeLimitPoller({
+  credentialsPath: configuration.claudeCredentialsPath,
   onChange: notifyClients,
 });
+
+const scanners = configuration.sources.map(
+  ({ provider, root }) =>
+    new SessionScanner({
+      parser: PARSERS[provider],
+      root,
+      lookbackDays: configuration.lookbackDays,
+      database,
+      onChange: (changedProvider) => {
+        if (changedProvider === 'claude') claudeLimits.poke();
+        notifyClients();
+      },
+    }),
+);
+
+// The service is ready once every provider finished its initial scan.
+const serviceState = () => {
+  const states = scanners.map((scanner) => scanner.snapshot().state);
+  if (states.every((state) => state === 'watching')) return 'watching';
+  if (states.includes('starting')) return 'starting';
+  return states.includes('degraded') ? 'degraded' : states[0];
+};
 
 const server = http.createServer(async (request, response) => {
   try {
@@ -64,28 +81,21 @@ const server = http.createServer(async (request, response) => {
         return sendJson(response, 200, catalog.snapshot(database.detectedModels()));
       }
     }
-    if (request.method === 'GET' && requestUrl.pathname === '/api/widget') {
-      const historyMinutes = normalizeWidgetHistoryMinutes(requestUrl.searchParams.get('minutes'));
-      return sendJson(response, 200, {
-        ...widgetSnapshot(database.database, Date.now(), historyMinutes),
-        historyMinutes,
-        runningModels: runningModels(database.database),
-        state: scanner.snapshot().state,
-      });
+    if (request.method === 'GET' && requestUrl.pathname === '/api/taskbar') {
+      return sendJson(response, 200, { ...taskbarSnapshot(database, claudeLimits.snapshot()), state: serviceState() });
     }
-    if (request.method === 'POST' && requestUrl.pathname === '/api/widget/start') {
-      const pid = startWidget();
-      return sendJson(response, 202, { accepted: true, pid });
+    if (request.method === 'GET' && requestUrl.pathname === '/api/limits') {
+      return sendJson(response, 200, { claude: claudeLimits.snapshot(), codex: database.rateLimits('codex') });
     }
     if (request.method === 'GET' && requestUrl.pathname === '/api/health') {
       return sendJson(response, 200, {
         app: APP_NAME,
         version: APP_VERSION,
-        state: scanner.snapshot().state,
+        state: serviceState(),
         port: configuration.port,
-        sessionsRoot: configuration.sessionsRoot,
         counts: database.counts(),
-        scanner: scanner.snapshot(),
+        scanners: scanners.map((scanner) => scanner.snapshot()),
+        claudeLimits: { status: claudeLimits.snapshot().status, checkedAt: claudeLimits.snapshot().checkedAt },
       });
     }
     if (request.method === 'GET' && requestUrl.pathname === '/api/turns') {
@@ -94,14 +104,16 @@ const server = http.createServer(async (request, response) => {
         turns: database.listRootTurns({
           limit: requestUrl.searchParams.get('limit'),
           days: requestUrl.searchParams.get('days'),
+          provider: requestUrl.searchParams.get('provider'),
         }),
       });
     }
     if (request.method === 'GET' && requestUrl.pathname === '/api/summary') {
-      return sendJson(response, 200, database.summary(requestUrl.searchParams.get('days')));
+      return sendJson(response, 200, database.summary(requestUrl.searchParams.get('days'), requestUrl.searchParams.get('provider')));
     }
     if (request.method === 'POST' && requestUrl.pathname === '/api/rescan') {
-      scanner.fullScan().catch((error) => console.error(error));
+      for (const scanner of scanners) scanner.fullScan().catch((error) => console.error(error));
+      claudeLimits.poll().catch((error) => console.error(error));
       return sendJson(response, 202, { accepted: true });
     }
     if (request.method === 'GET' && requestUrl.pathname === '/api/events') {
@@ -126,8 +138,11 @@ const server = http.createServer(async (request, response) => {
 
 server.listen(configuration.port, configuration.host, () => {
   fs.writeFileSync(configuration.pidPath, String(process.pid), 'utf8');
-  console.log(`Codex Usage Monitor ${APP_VERSION} listening on http://${configuration.host}:${configuration.port}`);
-  scanner.start().catch((error) => console.error('Scanner startup failed:', error));
+  console.log(`Agent Usage Monitor ${APP_VERSION} listening on http://${configuration.host}:${configuration.port}`);
+  for (const scanner of scanners) {
+    scanner.start().catch((error) => console.error(`${scanner.provider} scanner startup failed:`, error));
+  }
+  claudeLimits.start();
 });
 
 const heartbeat = setInterval(() => {
@@ -138,7 +153,8 @@ heartbeat.unref();
 async function shutdown(signal) {
   console.log(`Received ${signal}; shutting down.`);
   clearInterval(heartbeat);
-  await scanner.stop();
+  claudeLimits.stop();
+  await Promise.all(scanners.map((scanner) => scanner.stop()));
   for (const response of eventClients) response.end();
   await new Promise((resolve) => server.close(resolve));
   database.close();
@@ -150,6 +166,18 @@ async function shutdown(signal) {
 
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+function migrateLegacyPrices() {
+  const target = path.join(configuration.stateRoot, 'price-overrides.json');
+  const legacy = path.join(configuration.legacyStateRoot, 'price-overrides.json');
+  if (fs.existsSync(target) || !fs.existsSync(legacy)) return;
+  try {
+    fs.copyFileSync(legacy, target);
+    console.log(`Copied custom model prices from ${legacy}.`);
+  } catch (error) {
+    console.error(`Could not copy legacy model prices: ${error.message}`);
+  }
+}
 
 function sendJson(response, status, value) {
   const body = JSON.stringify(value);
@@ -189,19 +217,4 @@ function contentType(filePath) {
   if (filePath.endsWith('.js')) return 'text/javascript; charset=utf-8';
   if (filePath.endsWith('.svg')) return 'image/svg+xml';
   return 'application/octet-stream';
-}
-
-function startWidget() {
-  if (process.platform !== 'win32') throw new Error('The desktop widget is only available on Windows.');
-  const scriptPath = path.join(ROOT_DIRECTORY, 'scripts', 'Widget.ps1');
-  const child = spawn(
-    path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-    ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', scriptPath, '-Replace'],
-    { stdio: 'ignore', windowsHide: true },
-  );
-  child.on('error', (error) => console.error('Widget startup failed:', error));
-  child.on('exit', (code) => {
-    if (code) console.error(`Widget process exited with code ${code}.`);
-  });
-  return child.pid;
 }

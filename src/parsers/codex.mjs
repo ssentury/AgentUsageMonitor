@@ -1,13 +1,22 @@
-const AUTO_REVIEW_MODEL = 'codex-auto-review';
+import { compactTitle, integerValue, normalizeTimestamp, stringValue, windowLabel } from './common.mjs';
 
-export function parseJsonLine(line) {
-  try {
-    const record = JSON.parse(line);
-    return record && typeof record === 'object' ? record : null;
-  } catch {
-    return null;
-  }
-}
+export const AUTO_REVIEW_MODEL = 'codex-auto-review';
+
+// Parses Codex Desktop/CLI rollout JSONL (~/.codex/sessions).
+export const codexParser = {
+  provider: 'codex',
+  createState,
+  parse(record, state, sourceFile) {
+    const actions = [];
+    const metadata = sessionMetadata(record, sourceFile);
+    if (metadata) {
+      state.sessionId = metadata.id;
+      actions.push({ type: 'session', metadata });
+    }
+    actions.push(...applyRecord(record, state));
+    return actions;
+  },
+};
 
 export function sessionMetadata(record, sourceFile) {
   if (record?.type !== 'session_meta') return null;
@@ -22,6 +31,7 @@ export function sessionMetadata(record, sourceFile) {
 
   return {
     id,
+    provider: 'codex',
     parentSessionId,
     startedAt: normalizeTimestamp(record.timestamp || payload.timestamp),
     cwd: stringValue(payload.cwd),
@@ -101,11 +111,14 @@ export function applyRecord(record, state) {
       clientId: stringValue(payload.client_id),
       title: summarizeMessage(payload.message),
     });
-  } else if (payload.type === 'token_count' && state.currentTurnId) {
+  } else if (payload.type === 'token_count') {
+    // Plan usage is reported with every token event, independent of the current turn.
+    actions.push(...rateLimitActions(payload.rate_limits, timestamp));
     const usage = payload.info?.last_token_usage;
-    if (usage) {
+    if (usage && state.currentTurnId) {
       actions.push({
         type: 'call',
+        provider: 'codex',
         turnId: state.currentTurnId,
         sessionId: state.sessionId,
         at: timestamp,
@@ -114,6 +127,7 @@ export function applyRecord(record, state) {
         inputTokens: integerValue(usage.input_tokens),
         cachedInputTokens: integerValue(usage.cached_input_tokens),
         cacheWriteTokens: integerValue(usage.cache_write_input_tokens),
+        cacheWrite1hTokens: 0,
         outputTokens: integerValue(usage.output_tokens),
         reasoningTokens: integerValue(usage.reasoning_output_tokens),
         totalTokens: integerValue(usage.total_tokens),
@@ -138,6 +152,10 @@ export function applyRecord(record, state) {
 }
 
 export function createParserState(saved = {}) {
+  return createState(saved);
+}
+
+function createState(saved = {}) {
   return {
     sessionId: saved.sessionId || null,
     currentTurnId: saved.currentTurnId || null,
@@ -146,32 +164,34 @@ export function createParserState(saved = {}) {
   };
 }
 
+function rateLimitActions(limits, at) {
+  // Only the main Codex bucket is shown; model-specific buckets use other limit IDs.
+  if (!limits || typeof limits !== 'object' || (limits.limit_id && limits.limit_id !== 'codex')) return [];
+  const actions = [];
+  for (const slot of [limits.primary, limits.secondary]) {
+    const usedPercent = Number(slot?.used_percent);
+    if (!slot || !Number.isFinite(usedPercent)) continue;
+    const windowMinutes = integerValue(slot.window_minutes, 0);
+    actions.push({
+      type: 'rate-limit',
+      provider: 'codex',
+      window: windowLabel(windowMinutes),
+      usedPercent,
+      windowMinutes,
+      resetsAt: Number.isFinite(Number(slot.resets_at)) ? normalizeTimestamp(Number(slot.resets_at)) : null,
+      at,
+    });
+  }
+  return actions;
+}
+
 function summarizeMessage(value) {
   if (typeof value !== 'string') return null;
   const requestHeading = value.match(/(?:^|\n)#{1,6}\s*My request:\s*(?:\n|$)/i);
   const prompt = requestHeading ? value.slice(requestHeading.index + requestHeading[0].length) : value;
-  const compact = prompt
-    .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, ' ')
-    .replace(/<image[\s\S]*?<\/image>/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!compact) return null;
-  return compact.length > 180 ? `${compact.slice(0, 177)}...` : compact;
+  return compactTitle(
+    prompt
+      .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, ' ')
+      .replace(/<image[\s\S]*?<\/image>/gi, ' '),
+  );
 }
-
-function normalizeTimestamp(value) {
-  if (!value) return new Date().toISOString();
-  const date = typeof value === 'number' ? new Date(value * 1000) : new Date(value);
-  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
-}
-
-function stringValue(value) {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function integerValue(value, fallback = 0) {
-  const number = Number(value);
-  return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : fallback;
-}
-
-export { AUTO_REVIEW_MODEL };

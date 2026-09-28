@@ -1,15 +1,17 @@
 const turnList = document.querySelector('#turn-list');
 const summary = document.querySelector('#summary');
 const days = document.querySelector('#days');
+const provider = document.querySelector('#provider');
+const limits = document.querySelector('#limits');
 const listPeriod = document.querySelector('#list-period');
 const updatedAt = document.querySelector('#updated-at');
 const connection = document.querySelector('#connection');
 const liveDot = document.querySelector('#live-dot');
 const rescan = document.querySelector('#rescan');
-const showWidget = document.querySelector('#show-widget');
 let refreshTimer;
 
 days.addEventListener('change', refresh);
+provider.addEventListener('change', refresh);
 rescan.addEventListener('click', async () => {
   rescan.disabled = true;
   await fetch('/api/rescan', { method: 'POST' });
@@ -17,22 +19,6 @@ rescan.addEventListener('click', async () => {
     rescan.disabled = false;
     refresh();
   }, 500);
-});
-showWidget.addEventListener('click', async () => {
-  showWidget.disabled = true;
-  const originalText = showWidget.textContent;
-  try {
-    const response = await fetch('/api/widget/start', { method: 'POST' });
-    if (!response.ok) throw new Error('Could not start the widget.');
-    showWidget.textContent = 'Opening widget…';
-  } catch (error) {
-    showWidget.textContent = error.message;
-  } finally {
-    setTimeout(() => {
-      showWidget.disabled = false;
-      showWidget.textContent = originalText;
-    }, 1500);
-  }
 });
 
 const events = new EventSource('/api/events');
@@ -52,15 +38,17 @@ refresh();
 async function refresh() {
   try {
     listPeriod.textContent = days.selectedOptions[0]?.textContent || 'Today';
-    const query = `days=${encodeURIComponent(days.value)}`;
-    const [turnResponse, summaryResponse, catalogResponse] = await Promise.all([
+    const query = `days=${encodeURIComponent(days.value)}&provider=${encodeURIComponent(provider.value)}`;
+    const [turnResponse, summaryResponse, catalogResponse, taskbarResponse] = await Promise.all([
       fetch(`/api/turns?${query}&limit=150`, { cache: 'no-store' }),
       fetch(`/api/summary?${query}`, { cache: 'no-store' }),
       fetch('/api/catalog', { cache: 'no-store' }),
+      fetch('/api/taskbar', { cache: 'no-store' }),
     ]);
     if (!turnResponse.ok || !summaryResponse.ok) throw new Error('Could not load usage data.');
     const turnPayload = await turnResponse.json();
     renderSummary(await summaryResponse.json());
+    if (taskbarResponse.ok) renderLimits((await taskbarResponse.json()).providers);
     renderTurns(turnPayload.turns);
     if (catalogResponse.ok) {
       const catalog = await catalogResponse.json();
@@ -92,8 +80,11 @@ function renderSummary(data) {
     ['Input tokens', formatTokens(data.inputTokens)],
     ['Cached input', formatTokens(data.cachedInputTokens)],
     ['API-equivalent cost', `$${formatMoney(data.usd)}${data.unpricedCalls ? ' + unpriced' : ''}`],
-    ['Estimated credits', `${formatMoney(data.credits)}${data.unpricedCalls ? ' + unpriced' : ''}`],
   ];
+  // Credits only exist for Codex plans.
+  if (provider.value !== 'claude') {
+    values.push(['Codex credits', `${formatMoney(data.credits)}${data.unpricedCalls ? ' + unpriced' : ''}`]);
+  }
   summary.replaceChildren(
     ...values.map(([label, value]) => {
       const item = element('div', 'metric');
@@ -101,6 +92,36 @@ function renderSummary(data) {
       return item;
     }),
   );
+}
+
+function renderLimits(providers) {
+  const visible = providers.filter((item) => item.hasUsage && (!provider.value || item.id === provider.value));
+  limits.replaceChildren(...visible.map((item) => {
+    const card = element('div', 'limit-card');
+    const head = element('div', 'limit-head');
+    head.append(
+      element('span', `provider-badge ${item.id}`, item.label),
+      element('span', 'limit-cost', `$${formatMoney(item.usdPer30s)}/30s · today $${formatMoney(item.todayUsd)}`),
+    );
+    card.append(head);
+    for (const limit of item.limits) {
+      const row = element('div', `limit-row ${limit.stale ? 'stale' : ''}`);
+      const bar = element('div', 'limit-bar');
+      const fill = element('span', limit.usedPercent >= 80 ? 'high' : limit.usedPercent >= 60 ? 'mid' : '');
+      fill.style.width = `${Math.min(100, Math.max(0, limit.usedPercent))}%`;
+      bar.append(fill);
+      row.append(
+        element('span', 'limit-window', limit.window),
+        bar,
+        element('span', 'limit-value', `${Math.round(limit.usedPercent)}%`),
+        element('span', 'limit-reset', limit.resetsAt ? `resets ${formatTime(limit.resetsAt)}` : ''),
+      );
+      card.append(row);
+    }
+    if (item.limitStatus !== 'ok' && item.limitMessage) card.append(element('p', 'limit-note', item.limitMessage));
+    else if (!item.limits.length) card.append(element('p', 'limit-note', 'No plan usage reported yet.'));
+    return card;
+  }));
 }
 
 function renderTurns(turns) {
@@ -117,12 +138,13 @@ function renderTurn(turn) {
   const left = element('div');
   const title = element('div', 'turn-title');
   if (turn.status === 'running') title.append(element('span', 'status', '● Running'));
+  title.append(element('span', `provider-badge ${turn.provider}`, turn.provider === 'claude' ? 'Claude' : 'Codex'));
   title.append(document.createTextNode(turn.title || '(Untitled prompt)'));
   left.append(title, element('div', 'turn-meta', `${formatTime(turn.started_at)} · ${shortPath(turn.cwd)}`));
   const total = element('div', 'turn-total');
   total.append(
     element('div', '', `${formatTokens(turn.totals.totalTokens)} tokens · ${turn.totals.calls} calls`),
-    element('div', '', `$${formatMoney(turn.totals.usd)} · ${formatMoney(turn.totals.credits)} credits${turn.totals.hasUnpriced ? ' + unpriced' : ''}`),
+    element('div', '', `$${formatMoney(turn.totals.usd)}${turn.provider === 'codex' ? ` · ${formatMoney(turn.totals.credits)} credits` : ''}${turn.totals.hasUnpriced ? ' + unpriced' : ''}`),
   );
   head.append(left, total);
   card.append(head);
@@ -136,7 +158,7 @@ function renderTurn(turn) {
       label,
       element('div', 'tokens', `${formatTokens(model.inputTokens)} / ${formatTokens(model.cachedInputTokens)} / ${formatTokens(model.outputTokens)} / ${formatTokens(model.totalTokens)}`),
       element('div', 'money', model.usd == null ? 'Unpriced' : `$${formatMoney(model.usd)}`),
-      element('div', 'money', model.credits == null ? 'Unpriced' : formatMoney(model.credits)),
+      element('div', 'money', model.credits == null ? (model.usd == null ? 'Unpriced' : '—') : formatMoney(model.credits)),
     );
     rows.append(row);
   }

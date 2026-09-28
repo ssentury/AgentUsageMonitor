@@ -3,18 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Codex Usage Monitor</title>
-    <link rel="stylesheet" href="/styles.css?v=catalog-1" />
+    <title>Agent Usage Monitor</title>
+    <link rel="stylesheet" href="/styles.css?v=agents-1" />
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
         <div>
           <div class="eyebrow"><span id="live-dot" class="live-dot"></span><span id="connection">Connecting</span></div>
-          <h1>Codex Usage Monitor</h1>
-          <p>Local usage by session, model, and subagent.</p>
+          <h1>Agent Usage Monitor</h1>
+          <p>Local Claude Code and Codex usage by prompt, model, and subagent.</p>
         </div>
         <div class="actions">
+          <select id="provider" aria-label="Agent">
+            <option value="" selected>All agents</option>
+            <option value="claude">Claude</option>
+            <option value="codex">Codex</option>
+          </select>
           <select id="days" aria-label="Date range">
             <option value="today" selected>Today</option>
             <option value="7">Last 7 days</option>
@@ -22,11 +27,11 @@
             <option value="90">Last 90 days</option>
           </select>
           <button id="rescan" type="button">Rescan</button>
-          <button id="show-widget" type="button">Open widget</button>
           <a class="button-link" href="/prices.html" id="model-prices">Model prices</a>
         </div>
       </header>
 
+      <section id="limits" class="limits" aria-label="Plan usage"></section>
       <section id="summary" class="summary" aria-label="Summary"></section>
       <section class="section-heading">
         <h2>Prompt history · <span id="list-period">Today</span></h2>
@@ -34,6 +39,6 @@
       </section>
       <section id="turn-list" class="turn-list" aria-live="polite"></section>
     </main>
-    <script type="module" src="/app.js?v=catalog-1"></script>
+    <script type="module" src="/app.js?v=agents-1"></script>
   </body>
 </html>

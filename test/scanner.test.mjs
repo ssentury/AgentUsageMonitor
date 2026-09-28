@@ -7,6 +7,7 @@ import test from 'node:test';
 import { UsageDatabase } from '../src/database.mjs';
 import { priceUsage } from '../src/pricing.mjs';
 import { SessionScanner } from '../src/scanner.mjs';
+import { codexParser } from '../src/parsers/codex.mjs';
 
 const rateCard = {
   models: {
@@ -70,7 +71,7 @@ test('scanner attributes child calls to the root turn and excludes auto review',
     event('2026-08-04T00:00:08.000Z', 'task_complete', { turn_id: 'review-turn' }),
   ]);
 
-  const scanner = new SessionScanner({ sessionsRoot, lookbackDays: 3650, database });
+  const scanner = new SessionScanner({ parser: codexParser, root: sessionsRoot, lookbackDays: 3650, database });
   await scanner.fullScan();
   const turns = database.listRootTurns({ days: 3650 });
 
@@ -150,7 +151,7 @@ test('scanner reads modern user messages and repairs out-of-order child attribut
     token('2026-08-04T10:00:03.000Z', 1000, 600, 100),
   ]);
 
-  const scanner = new SessionScanner({ sessionsRoot, lookbackDays: 3650, database });
+  const scanner = new SessionScanner({ parser: codexParser, root: sessionsRoot, lookbackDays: 3650, database });
   await scanner.fullScan();
 
   const turns = database.listRootTurns({ limit: 10, days: 3650 });

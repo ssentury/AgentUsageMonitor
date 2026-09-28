@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 const sourceDirectory = path.dirname(fileURLToPath(import.meta.url));
 
-export const APP_NAME = 'codex-usage-monitor';
-export const APP_VERSION = '0.1.0';
+export const APP_NAME = 'agent-usage-monitor';
+export const APP_VERSION = '0.2.0';
 export const DEFAULT_PORT = 47831;
 export const DEFAULT_LOOKBACK_DAYS = 30;
 export const ROOT_DIRECTORY = path.resolve(sourceDirectory, '..');
@@ -21,15 +21,18 @@ export function resolveConfiguration(argumentsList = process.argv.slice(2), envi
   const codexHome = path.resolve(
     argumentValue('--codex-home') || environment.CODEX_HOME || path.join(os.homedir(), '.codex'),
   );
+  const claudeHome = path.resolve(
+    argumentValue('--claude-home') || environment.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
+  );
   const stateRoot = path.resolve(
     argumentValue('--state-root') ||
-      environment.CODEX_USAGE_MONITOR_STATE_ROOT ||
-      path.join(os.homedir(), '.codex-usage-monitor'),
+      environment.AGENT_USAGE_MONITOR_STATE_ROOT ||
+      path.join(os.homedir(), '.agent-usage-monitor'),
   );
-  const parsedPort = Number(argumentValue('--port') || environment.CODEX_USAGE_MONITOR_PORT || DEFAULT_PORT);
+  const parsedPort = Number(argumentValue('--port') || environment.AGENT_USAGE_MONITOR_PORT || DEFAULT_PORT);
   const parsedLookback = Number(
     argumentValue('--lookback-days') ||
-      environment.CODEX_USAGE_MONITOR_LOOKBACK_DAYS ||
+      environment.AGENT_USAGE_MONITOR_LOOKBACK_DAYS ||
       DEFAULT_LOOKBACK_DAYS,
   );
 
@@ -43,9 +46,14 @@ export function resolveConfiguration(argumentsList = process.argv.slice(2), envi
   return {
     host: '127.0.0.1',
     port: parsedPort,
-    codexHome,
-    sessionsRoot: path.join(codexHome, 'sessions'),
+    sources: [
+      { provider: 'codex', root: path.join(codexHome, 'sessions') },
+      { provider: 'claude', root: path.join(claudeHome, 'projects') },
+    ],
+    claudeCredentialsPath: path.join(claudeHome, '.credentials.json'),
     stateRoot,
+    // Price overrides from the former Codex-only monitor are copied once on first start.
+    legacyStateRoot: path.join(os.homedir(), '.codex-usage-monitor'),
     databasePath: path.join(stateRoot, 'usage.sqlite3'),
     pidPath: path.join(stateRoot, 'service.pid'),
     lookbackDays: parsedLookback,

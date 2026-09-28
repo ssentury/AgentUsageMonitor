@@ -4,7 +4,8 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { priceUsage } from './pricing.mjs';
 
-const PARSER_VERSION = 3;
+const PARSER_VERSION = 4;
+const PROVIDERS = new Set(['codex', 'claude']);
 
 export class UsageDatabase {
   constructor(databasePath, rateCard) {
@@ -13,6 +14,7 @@ export class UsageDatabase {
     this.rateCard = rateCard;
     this.database.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;');
     this.#createSchema();
+    this.#migrateSchema();
     this.#prepareParserVersion();
     this.#refreshPrices();
   }
@@ -94,8 +96,8 @@ export class UsageDatabase {
       .prepare(
         `INSERT INTO sessions(
            id, root_session_id, parent_session_id, parent_turn_id, started_at, updated_at,
-           cwd, originator, thread_source, agent_nickname, agent_role, depth, source_file, status
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
+           cwd, originator, thread_source, agent_nickname, agent_role, depth, source_file, status, provider
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', ?)
          ON CONFLICT(id) DO UPDATE SET
            root_session_id = COALESCE(sessions.root_session_id, excluded.root_session_id),
            parent_session_id = COALESCE(sessions.parent_session_id, excluded.parent_session_id),
@@ -123,6 +125,7 @@ export class UsageDatabase {
         metadata.agentRole,
         metadata.depth,
         metadata.sourceFile,
+        metadata.provider || 'codex',
       );
     return { ...metadata, rootSessionId, parentTurnId };
   }
@@ -187,24 +190,70 @@ export class UsageDatabase {
       return;
     }
 
+    if (action.type === 'rate-limit') {
+      // Rescans replay old files, so only newer observations may replace a window.
+      this.database
+        .prepare(
+          `INSERT INTO rate_limits(provider, window_key, used_percent, window_minutes, resets_at, observed_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(provider, window_key) DO UPDATE SET
+             used_percent = excluded.used_percent,
+             window_minutes = excluded.window_minutes,
+             resets_at = excluded.resets_at,
+             observed_at = excluded.observed_at
+           WHERE excluded.observed_at >= rate_limits.observed_at`,
+        )
+        .run(action.provider, action.window, action.usedPercent, action.windowMinutes, action.resetsAt, action.at);
+      return;
+    }
+
     if (action.type === 'call') {
+      const price = action.excluded
+        ? { usd: null, credits: null }
+        : priceUsage(action.model, action, this.rateCard);
+      // Claude repeats one message across streamed lines (and resumed transcripts);
+      // keep the first attribution but the most complete token counts.
+      const existing = this.database
+        .prepare('SELECT output_tokens, total_tokens FROM calls WHERE event_id = ?')
+        .get(eventId);
+      if (existing) {
+        if (action.outputTokens <= existing.output_tokens && action.totalTokens <= existing.total_tokens) return;
+        this.database
+          .prepare(
+            `UPDATE calls SET input_tokens = ?, cached_input_tokens = ?, cache_write_tokens = ?,
+               cache_write_1h_tokens = ?, output_tokens = ?, reasoning_tokens = ?, total_tokens = ?,
+               usd = ?, credits = ?
+             WHERE event_id = ?`,
+          )
+          .run(
+            action.inputTokens,
+            action.cachedInputTokens,
+            action.cacheWriteTokens,
+            action.cacheWrite1hTokens || 0,
+            action.outputTokens,
+            action.reasoningTokens,
+            action.totalTokens,
+            price.usd,
+            price.credits,
+            eventId,
+          );
+        return;
+      }
       const turn = this.database
         .prepare('SELECT root_turn_id FROM turns WHERE id = ?')
         .get(action.turnId);
       const rootTurnId = turn?.root_turn_id || action.turnId;
-      const price = action.excluded
-        ? { usd: null, credits: null }
-        : priceUsage(action.model, action, this.rateCard);
       this.database
         .prepare(
-          `INSERT OR IGNORE INTO calls(
-             event_id, session_id, turn_id, root_turn_id, event_at, model, effort,
-             input_tokens, cached_input_tokens, cache_write_tokens, output_tokens,
+          `INSERT INTO calls(
+             event_id, provider, session_id, turn_id, root_turn_id, event_at, model, effort,
+             input_tokens, cached_input_tokens, cache_write_tokens, cache_write_1h_tokens, output_tokens,
              reasoning_tokens, total_tokens, excluded, usd, credits
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           eventId,
+          action.provider || 'codex',
           action.sessionId,
           action.turnId,
           rootTurnId,
@@ -214,6 +263,7 @@ export class UsageDatabase {
           action.inputTokens,
           action.cachedInputTokens,
           action.cacheWriteTokens,
+          action.cacheWrite1hTokens || 0,
           action.outputTokens,
           action.reasoningTokens,
           action.totalTokens,
@@ -222,6 +272,16 @@ export class UsageDatabase {
           price.credits,
         );
     }
+  }
+
+  rateLimits(provider) {
+    return this.database
+      .prepare(
+        `SELECT window_key, used_percent, window_minutes, resets_at, observed_at
+         FROM rate_limits WHERE provider = ? ORDER BY window_minutes`,
+      )
+      .all(provider)
+      .map(normalizeNumbers);
   }
 
   reconcileAttributions() {
@@ -275,22 +335,24 @@ export class UsageDatabase {
     }
   }
 
-  listRootTurns({ limit = 100, days = 30 } = {}) {
+  listRootTurns({ limit = 100, days = 30, provider = null } = {}) {
     const boundedLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
     const since = periodStartIso(days);
+    const providerFilter = normalizeProvider(provider);
     const turns = this.database
       .prepare(
         `SELECT t.id, t.session_id, t.started_at, t.completed_at, t.status, t.model, t.effort,
-                t.title, s.cwd
+                t.title, s.cwd, s.provider
          FROM turns t
          JOIN sessions s ON s.id = t.session_id
          WHERE t.root_turn_id = t.id
            AND COALESCE(s.thread_source, 'user') = 'user'
            AND t.started_at >= ?
+           AND (? IS NULL OR s.provider = ?)
          ORDER BY t.started_at DESC
          LIMIT ?`,
       )
-      .all(since, boundedLimit);
+      .all(since, providerFilter, providerFilter, boundedLimit);
     if (turns.length === 0) return [];
 
     const turnIds = turns.map((turn) => turn.id);
@@ -372,8 +434,9 @@ export class UsageDatabase {
     });
   }
 
-  summary(days = 30) {
+  summary(days = 30, provider = null) {
     const since = periodStartIso(days);
+    const providerFilter = normalizeProvider(provider);
     const row = this.database
       .prepare(
         `SELECT COUNT(*) AS calls,
@@ -386,10 +449,23 @@ export class UsageDatabase {
                 COALESCE(SUM(credits), 0) AS credits,
                 SUM(CASE WHEN usd IS NULL THEN 1 ELSE 0 END) AS unpriced_calls,
                 MAX(event_at) AS latest_event_at
-         FROM calls WHERE excluded = 0 AND event_at >= ?`,
+         FROM calls WHERE excluded = 0 AND event_at >= ? AND (? IS NULL OR provider = ?)`,
       )
-      .get(since);
+      .get(since, providerFilter, providerFilter);
     return normalizeNumbers(row);
+  }
+
+  // API-equivalent USD per provider since an ISO timestamp.
+  providerCost(since) {
+    const rows = this.database
+      .prepare(
+        `SELECT provider, COALESCE(SUM(usd), 0) AS usd,
+                SUM(CASE WHEN usd IS NULL THEN 1 ELSE 0 END) AS unpriced_calls,
+                MAX(event_at) AS latest_event_at
+         FROM calls WHERE excluded = 0 AND event_at >= ? GROUP BY provider`,
+      )
+      .all(since);
+    return new Map(rows.map((row) => [row.provider, normalizeNumbers(row)]));
   }
 
   counts() {
@@ -442,7 +518,8 @@ export class UsageDatabase {
         agent_role TEXT,
         depth INTEGER NOT NULL DEFAULT 0,
         source_file TEXT,
-        status TEXT NOT NULL DEFAULT 'idle'
+        status TEXT NOT NULL DEFAULT 'idle',
+        provider TEXT NOT NULL DEFAULT 'codex'
       );
       CREATE TABLE IF NOT EXISTS turns (
         id TEXT PRIMARY KEY,
@@ -459,6 +536,7 @@ export class UsageDatabase {
       );
       CREATE TABLE IF NOT EXISTS calls (
         event_id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL DEFAULT 'codex',
         session_id TEXT NOT NULL,
         turn_id TEXT NOT NULL,
         root_turn_id TEXT NOT NULL,
@@ -468,6 +546,7 @@ export class UsageDatabase {
         input_tokens INTEGER NOT NULL,
         cached_input_tokens INTEGER NOT NULL,
         cache_write_tokens INTEGER NOT NULL,
+        cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0,
         output_tokens INTEGER NOT NULL,
         reasoning_tokens INTEGER NOT NULL,
         total_tokens INTEGER NOT NULL,
@@ -480,14 +559,39 @@ export class UsageDatabase {
       CREATE INDEX IF NOT EXISTS idx_turns_root_started ON turns(root_turn_id, started_at DESC);
       CREATE INDEX IF NOT EXISTS idx_turns_session_started ON turns(session_id, started_at DESC);
       CREATE INDEX IF NOT EXISTS idx_calls_root_event ON calls(root_turn_id, event_at);
-      CREATE INDEX IF NOT EXISTS idx_calls_widget_event ON calls(event_at) WHERE excluded = 0;
       CREATE INDEX IF NOT EXISTS idx_calls_turn ON calls(turn_id);
       CREATE INDEX IF NOT EXISTS idx_calls_session_root ON calls(session_id, root_turn_id);
       CREATE INDEX IF NOT EXISTS idx_sessions_parent_turn ON sessions(parent_turn_id);
+      CREATE TABLE IF NOT EXISTS rate_limits (
+        provider TEXT NOT NULL,
+        window_key TEXT NOT NULL,
+        used_percent REAL NOT NULL,
+        window_minutes INTEGER NOT NULL,
+        resets_at TEXT,
+        observed_at TEXT NOT NULL,
+        PRIMARY KEY(provider, window_key)
+      );
       CREATE TABLE IF NOT EXISTS metadata (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+    `);
+  }
+
+  // Adds provider-era columns to databases created by the Codex-only version.
+  #migrateSchema() {
+    const ensureColumn = (table, column, definition) => {
+      const columns = this.database.prepare(`PRAGMA table_info(${table})`).all();
+      if (!columns.some((row) => row.name === column)) {
+        this.database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      }
+    };
+    ensureColumn('sessions', 'provider', "TEXT NOT NULL DEFAULT 'codex'");
+    ensureColumn('calls', 'provider', "TEXT NOT NULL DEFAULT 'codex'");
+    ensureColumn('calls', 'cache_write_1h_tokens', 'INTEGER NOT NULL DEFAULT 0');
+    this.database.exec(`
+      DROP INDEX IF EXISTS idx_calls_widget_event;
+      CREATE INDEX IF NOT EXISTS idx_calls_provider_event ON calls(provider, event_at) WHERE excluded = 0;
     `);
   }
 
@@ -511,7 +615,8 @@ export class UsageDatabase {
 
     const calls = this.database
       .prepare(
-        `SELECT event_id, model, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens
+        `SELECT event_id, model, input_tokens, cached_input_tokens, cache_write_tokens,
+                cache_write_1h_tokens, output_tokens
          FROM calls WHERE excluded = 0`,
       )
       .all();
@@ -523,6 +628,7 @@ export class UsageDatabase {
           inputTokens: call.input_tokens,
           cachedInputTokens: call.cached_input_tokens,
           cacheWriteTokens: call.cache_write_tokens,
+          cacheWrite1hTokens: call.cache_write_1h_tokens,
           outputTokens: call.output_tokens,
         },
         this.rateCard,
@@ -535,7 +641,11 @@ export class UsageDatabase {
   }
 }
 
-function periodStartIso(period) {
+function normalizeProvider(value) {
+  return PROVIDERS.has(value) ? value : null;
+}
+
+export function periodStartIso(period) {
   if (period === 'today') {
     const localMidnight = new Date();
     localMidnight.setHours(0, 0, 0, 0);
