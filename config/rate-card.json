@@ -5,7 +5,7 @@
       "https://developers.openai.com/api/docs/pricing",
       "https://platform.claude.com/docs/en/about-claude/pricing"
     ],
-    "effectiveAt": "2026-09-28"
+    "effectiveAt": "2026-09-29"
   },
   "models": {
     "gpt-5.5": {
@@ -147,6 +147,13 @@
       "cacheWritePerMillion": 6.25,
       "cacheWrite1hPerMillion": 10,
       "outputPerMillion": 25
+    },
+    "claude-sonnet-5-5": {
+      "inputPerMillion": 2,
+      "cachedInputPerMillion": 0.2,
+      "cacheWritePerMillion": 2.5,
+      "cacheWrite1hPerMillion": 4,
+      "outputPerMillion": 10
     },
     "claude-sonnet-5": {
       "inputPerMillion": 2,

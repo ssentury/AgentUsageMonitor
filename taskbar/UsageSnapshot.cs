@@ -21,6 +21,8 @@ namespace AgentUsageTaskbar
         public bool HasUsage;
         public bool Active;
         public double UsdPer30s;
+        public double BurnScaleUsd;
+        public double? ExhaustSeconds;
         public double TodayUsd;
         public bool Unpriced;
         public string LimitStatus;
@@ -48,6 +50,10 @@ namespace AgentUsageTaskbar
                     HasUsage = Flag(provider, "hasUsage"),
                     Active = Flag(provider, "active"),
                     UsdPer30s = Number(provider, "usdPer30s"),
+                    BurnScaleUsd = Number(provider, "burnScaleUsd"),
+                    ExhaustSeconds = provider.TryGetValue("exhaustSeconds", out var exhaust) && exhaust != null
+                        ? Number(provider, "exhaustSeconds")
+                        : (double?)null,
                     TodayUsd = Number(provider, "todayUsd"),
                     Unpriced = Flag(provider, "unpriced"),
                     LimitStatus = Text(provider, "limitStatus") ?? "unknown",

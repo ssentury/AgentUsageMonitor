@@ -468,6 +468,18 @@ export class UsageDatabase {
     return new Map(rows.map((row) => [row.provider, normalizeNumbers(row)]));
   }
 
+  // Spend per fixed-size time bucket, only buckets that saw any priced usage.
+  costBuckets(provider, since, bucketSeconds) {
+    return this.database
+      .prepare(
+        `SELECT SUM(usd) AS usd FROM calls
+         WHERE excluded = 0 AND provider = ? AND event_at >= ? AND usd IS NOT NULL
+         GROUP BY CAST(strftime('%s', event_at) AS INTEGER) / ?`,
+      )
+      .all(provider, since, bucketSeconds)
+      .map((row) => row.usd);
+  }
+
   counts() {
     return this.database
       .prepare(

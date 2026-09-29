@@ -15,6 +15,7 @@ namespace AgentUsageTaskbar
     {
         private static readonly Color ClaudeColor = Color.FromArgb(217, 119, 87);
         private static readonly Color CodexColor = Color.FromArgb(87, 157, 255);
+        private static readonly Color NormalColor = Color.FromArgb(74, 144, 226);
         private static readonly Color ActiveColor = Color.FromArgb(63, 185, 80);
         private static readonly Color WarnColor = Color.FromArgb(228, 163, 58);
         private static readonly Color DangerColor = Color.FromArgb(229, 72, 77);
@@ -56,17 +57,25 @@ namespace AgentUsageTaskbar
                     canvas.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
                     canvas.SmoothingMode = SmoothingMode.AntiAlias;
                     var lineHeight = _font.GetHeight(canvas);
-                    var top = (height - lineHeight * rows.Count) / 2f;
+                    var barHeight = Math.Max(2f, 3f * scale);
+                    var barGap = 1f * scale;
+                    var rowHeight = lineHeight + barGap + barHeight;
+                    var top = Math.Max(0f, (height - rowHeight * rows.Count) / 2f);
+                    var track = Color.FromArgb(lightTheme ? 40 : 60, muted);
                     for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
                     {
                         var x = padding;
-                        var y = top + rowIndex * lineHeight;
+                        var y = top + rowIndex * rowHeight;
                         for (var index = 0; index < rows[rowIndex].Count; index++)
                         {
                             var cell = rows[rowIndex][index];
                             using (var brush = new SolidBrush(cell.Color))
                             {
                                 canvas.DrawString(cell.Text, cell.Bold ? _boldFont : _font, brush, x, y, StringFormat.GenericTypographic);
+                            }
+                            if (cell.Fraction.HasValue)
+                            {
+                                DrawGauge(canvas, x, y + lineHeight + barGap, widths[index], barHeight, cell.Fraction.Value, cell.GaugeColor, track);
                             }
                             x += widths[index] + gap;
                         }
@@ -90,9 +99,12 @@ namespace AgentUsageTaskbar
                 {
                     new Cell("●", provider.Active ? ActiveColor : muted),
                     new Cell(provider.Label, provider.Id == "claude" ? ClaudeColor : provider.Id == "codex" ? CodexColor : foreground, true),
-                    new Cell(Money(provider.UsdPer30s) + "/30s", provider.Active ? foreground : muted),
-                    new Cell("오늘 " + Money(provider.TodayUsd) + (provider.Unpriced ? "+" : ""), foreground),
                 };
+                var providerColor = provider.Id == "claude" ? ClaudeColor : CodexColor;
+                var fiveHour = provider.Limits.FirstOrDefault(item => item.Window == "5h");
+                var scaleUsd = provider.BurnScaleUsd > 0 ? provider.BurnScaleUsd : 0.6;
+                row.Add(new Cell(Money(provider.UsdPer30s) + "/30s", provider.Active ? foreground : muted)
+                    .WithGauge(provider.UsdPer30s / scaleUsd, BurnColor(provider, fiveHour, providerColor, muted)));
                 if (provider.LimitStatus == "needs-cli")
                 {
                     row.Add(new Cell("CLI 로그인 필요", WarnColor));
@@ -103,16 +115,61 @@ namespace AgentUsageTaskbar
                     foreach (var limit in provider.Limits.Where(item => item.Window == "5h" || item.Window == "7d"))
                     {
                         var color = limit.Stale ? muted
-                            : limit.UsedPercent >= 80 ? DangerColor
-                            : limit.UsedPercent >= 60 ? WarnColor
+                            : limit.UsedPercent >= 90 ? DangerColor
+                            : limit.UsedPercent >= 70 ? WarnColor
                             : foreground;
-                        row.Add(new Cell(limit.Window + " " + Math.Round(limit.UsedPercent).ToString(CultureInfo.InvariantCulture) + "%", color));
+                        var text = limit.Window + " " + Math.Round(limit.UsedPercent).ToString(CultureInfo.InvariantCulture)
+                            + "% ↻" + ResetCountdown(limit.ResetsAt, limit.Window == "7d");
+                        row.Add(new Cell(text, color).WithGauge(limit.UsedPercent / 100.0,
+                            limit.Stale ? muted : color == foreground ? NormalColor : color));
                     }
                 }
                 rows.Add(row);
             }
             if (rows.Count == 0) rows.Add(new List<Cell> { new Cell("Agent Usage", muted, true), new Cell("사용 기록 없음", muted) });
             return rows;
+        }
+
+        // Grey when quiet, provider color at a normal pace, orange/red when the recent pace
+        // would exhaust the 5h window before it resets.
+        private static Color BurnColor(ProviderInfo provider, LimitInfo fiveHour, Color providerColor, Color muted)
+        {
+            if (provider.UsdPer30s <= 0) return muted;
+            if (provider.ExhaustSeconds.HasValue && fiveHour != null && fiveHour.ResetsAt.HasValue)
+            {
+                var untilReset = (fiveHour.ResetsAt.Value - DateTime.Now).TotalSeconds;
+                if (provider.ExhaustSeconds.Value < untilReset) return DangerColor;
+                if (provider.ExhaustSeconds.Value < untilReset * 1.5) return WarnColor;
+            }
+            return NormalColor;
+        }
+
+        private static void DrawGauge(Graphics canvas, float x, float y, float width, float height, double fraction, Color fill, Color track)
+        {
+            using (var brush = new SolidBrush(track))
+            {
+                canvas.FillRectangle(brush, x, y, width, height);
+            }
+            var filled = (float)Math.Max(0, Math.Min(1, fraction)) * width;
+            if (filled < 1f && fraction > 0) filled = 1f;
+            if (filled <= 0) return;
+            using (var brush = new SolidBrush(fill))
+            {
+                canvas.FillRectangle(brush, x, y, filled, height);
+            }
+        }
+
+        private static string ResetCountdown(DateTime? resetsAt, bool days)
+        {
+            if (!resetsAt.HasValue) return days ? "-d --h" : "--:--";
+            var minutes = (int)Math.Ceiling(Math.Max(0, (resetsAt.Value - DateTime.Now).TotalMinutes));
+            if (days)
+            {
+                return (minutes / 1440).ToString(CultureInfo.InvariantCulture) + "d "
+                    + (minutes % 1440 / 60).ToString(CultureInfo.InvariantCulture) + "h";
+            }
+            return (minutes / 60).ToString("00", CultureInfo.InvariantCulture) + ":"
+                + (minutes % 60).ToString("00", CultureInfo.InvariantCulture);
         }
 
         public static string Money(double usd)
@@ -147,12 +204,24 @@ namespace AgentUsageTaskbar
             public readonly string Text;
             public readonly Color Color;
             public readonly bool Bold;
+            public double? Fraction;
+            public Color GaugeColor;
 
             public Cell(string text, Color color, bool bold = false)
             {
                 Text = text;
                 Color = color;
                 Bold = bold;
+                Fraction = null;
+                GaugeColor = color;
+            }
+
+            public Cell WithGauge(double fraction, Color color)
+            {
+                var copy = this;
+                copy.Fraction = fraction;
+                copy.GaugeColor = color;
+                return copy;
             }
         }
     }
