@@ -5,6 +5,8 @@ const ACTIVE_INTERVAL_MS = 60_000;
 const IDLE_INTERVAL_MS = 300_000;
 const MIN_POKE_INTERVAL_MS = 30_000;
 const TICK_MS = 15_000;
+const RATE_LIMIT_BASE_BACKOFF_MS = 120_000;
+const RATE_LIMIT_MAX_BACKOFF_MS = 900_000;
 const WINDOW_LABELS = { five_hour: '5h', seven_day: '7d', seven_day_opus: '7d Opus', seven_day_sonnet: '7d Sonnet' };
 const WINDOW_MINUTES = { five_hour: 300, seven_day: 10080, seven_day_opus: 10080, seven_day_sonnet: 10080 };
 
@@ -24,6 +26,8 @@ export class ClaudeLimitPoller {
     this.polling = false;
     this.lastPollAt = 0;
     this.lastActivityAt = 0;
+    this.backoffUntil = 0;
+    this.rateLimitStreak = 0;
     this.credentialsMtimeMs = null;
     this.state = { status: 'unknown', message: null, checkedAt: null, limits: [] };
   }
@@ -52,7 +56,7 @@ export class ClaudeLimitPoller {
   }
 
   async poll() {
-    if (this.polling) return;
+    if (this.polling || this.now() < this.backoffUntil) return;
     this.polling = true;
     this.lastPollAt = this.now();
     try {
@@ -102,10 +106,20 @@ export class ClaudeLimitPoller {
       return failure('Claude usage request failed (network).', this.state.limits);
     }
     if (response.status === 401 || response.status === 403) return needsCli(this.state.limits);
+    if (response.status === 429) {
+      // Back off instead of hammering a rate-limited endpoint: honor Retry-After, else double up to 15 min.
+      this.rateLimitStreak += 1;
+      const retryAfterMs = Number(response.headers?.get?.('retry-after')) * 1000;
+      const delayMs = Number.isFinite(retryAfterMs) && retryAfterMs > 0
+        ? retryAfterMs
+        : Math.min(RATE_LIMIT_MAX_BACKOFF_MS, RATE_LIMIT_BASE_BACKOFF_MS * 2 ** (this.rateLimitStreak - 1));
+      this.backoffUntil = this.now() + delayMs;
+    }
     if (!response.ok) {
       this.logger.error(`Claude usage request returned HTTP ${response.status}.`);
       return failure(`Claude usage request returned HTTP ${response.status}.`, this.state.limits);
     }
+    this.rateLimitStreak = 0;
     try {
       return { status: 'ok', message: null, limits: parseUsage(await response.json(), this.now()) };
     } catch (error) {

@@ -10,6 +10,7 @@ namespace AgentUsageTaskbar
     {
         public string Window;
         public double UsedPercent;
+        public double RecentPercent;
         public DateTime? ResetsAt;
         public bool Stale;
     }
@@ -65,6 +66,7 @@ namespace AgentUsageTaskbar
                     {
                         Window = Text(limit, "window") ?? "?",
                         UsedPercent = Number(limit, "usedPercent"),
+                        RecentPercent = Number(limit, "recentPercent"),
                         ResetsAt = Date(limit, "resetsAt"),
                         Stale = Flag(limit, "stale"),
                     });

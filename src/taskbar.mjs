@@ -9,6 +9,7 @@ const SCALE_MIN_SAMPLES = 20;
 const SCALE_FALLBACK_USD = 0.6;
 const PROJECTION_WINDOW_SECONDS = 300;
 const PROJECTION_MIN_PERCENT = 3;
+const RECENT_PERCENT_SECONDS = 600;
 const FIVE_HOUR_MS = 5 * 3_600_000;
 
 const scaleCache = new Map();
@@ -39,6 +40,17 @@ function projectExhaustSeconds(database, id, fiveHour, now) {
   return Math.round(((100 - fiveHour.usedPercent) * usdPerPercent) / rate);
 }
 
+// Share of the 5h window's percent that the last RECENT_PERCENT_SECONDS accounted for, so the
+// indicator can show "recent damage" on the gauge. Estimated from local spend like the projection.
+function recentFiveHourPercent(database, id, fiveHour, now) {
+  if (!fiveHour?.resetsAt || fiveHour.usedPercent <= 0) return 0;
+  const windowStart = new Date(Date.parse(fiveHour.resetsAt) - FIVE_HOUR_MS).toISOString();
+  const windowUsd = database.providerCost(windowStart).get(id)?.usd || 0;
+  const recentUsd = database.providerCost(new Date(now - RECENT_PERCENT_SECONDS * 1000).toISOString()).get(id)?.usd || 0;
+  if (windowUsd <= 0 || recentUsd <= 0) return 0;
+  return Math.min(fiveHour.usedPercent, (recentUsd / windowUsd) * fiveHour.usedPercent);
+}
+
 // Compact per-provider state for the Windows taskbar indicator (polled every second).
 export function taskbarSnapshot(database, claudeLimits, now = Date.now()) {
   const recent = database.providerCost(new Date(now - RATE_WINDOW_SECONDS * 1000).toISOString());
@@ -65,7 +77,9 @@ export function taskbarSnapshot(database, claudeLimits, now = Date.now()) {
       latestEventAt: latest,
       limitStatus: limitState.status,
       limitMessage: limitState.message,
-      limits: limitState.limits,
+      limits: (limitState.limits || []).map((limit) => (limit === fiveHour
+        ? { ...limit, recentPercent: recentFiveHourPercent(database, id, limit, now) }
+        : limit)),
     };
   });
   return { at: new Date(now).toISOString(), rateWindowSeconds: RATE_WINDOW_SECONDS, providers };
