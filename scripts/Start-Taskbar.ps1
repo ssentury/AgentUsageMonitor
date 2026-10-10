@@ -35,5 +35,5 @@ if ($stale) {
 }
 
 if (-not $running) {
-    Start-Process -FilePath $exe -ArgumentList @('--port', [string]$Port, '--root', "`"$root`"")
+    Start-Process -FilePath $exe -ArgumentList @('--port', [string]$Port, '--root', "`"$root`"") -WindowStyle Hidden
 }

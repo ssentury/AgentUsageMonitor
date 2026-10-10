@@ -133,15 +133,16 @@ namespace AgentUsageTaskbar
             if (!Native.GetClientRect(taskbar, out var client) || !Native.GetWindowRect(taskbar, out var window)) return;
             var scale = Native.GetDpiForWindow(taskbar) / 96f;
             if (scale <= 0) scale = 1;
+            var visible = BandLayout.VisibleBounds(Native.ToRectangle(window), Screen.FromHandle(taskbar).WorkingArea);
 
-            using (var bitmap = _renderer.Render(_snapshot, Offline, _lightTheme, scale, client.Height))
+            using (var bitmap = _renderer.Render(_snapshot, Offline, _lightTheme, scale, visible.Height))
             {
                 var x = ComputeLeft(taskbar, client, window, bitmap.Width, scale);
-                var bounds = new Rectangle(x, 0, bitmap.Width, client.Height);
+                var bounds = new Rectangle(x, visible.Top, bitmap.Width, visible.Height);
                 _band.Place(bounds);
                 _band.Present(bitmap);
                 _lastBitmapSize = bitmap.Size;
-                _bandScreenBounds = new Rectangle(window.Left + x, window.Top, bitmap.Width, client.Height);
+                _bandScreenBounds = new Rectangle(window.Left + x, window.Top + visible.Top, bitmap.Width, visible.Height);
             }
             if (_hovering && _popup.Visible) ShowPopup();
         }

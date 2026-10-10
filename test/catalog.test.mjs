@@ -10,6 +10,28 @@ import { UsageDatabase } from '../src/database.mjs';
 const defaults = { models: { known: { inputPerMillion: 2, cachedInputPerMillion: .2, outputPerMillion: 10,
   creditsInputPerMillion: 50, creditsCachedInputPerMillion: 5, creditsOutputPerMillion: 250 } } };
 const usage = { inputTokens: 1000000, cachedInputTokens: 0, outputTokens: 0 };
+const bundled = JSON.parse(fs.readFileSync(new URL('../config/rate-card.json', import.meta.url), 'utf8'));
+
+test('GPT-6.1 Sol prices cached input and cache writes in USD and Codex credits', () => {
+  const price = priceUsage('gpt-6.1-sol', {
+    inputTokens: 100000, cachedInputTokens: 60000, cacheWriteTokens: 10000, outputTokens: 1000,
+  }, bundled);
+  assert.ok(Math.abs(price.usd - 0.101) < 1e-12);
+  assert.ok(Math.abs(price.credits - 2.525) < 1e-12);
+});
+
+test('Haiku 5.5 counts all prompt tokens for its 100k threshold, including both cache-write TTLs', () => {
+  const prompt = {
+    inputTokens: 100000, cachedInputTokens: 50000,
+    cacheWriteTokens: 30000, cacheWrite1hTokens: 10000, outputTokens: 1000,
+  };
+  const short = priceUsage('claude-haiku-5-5-20261007', prompt, bundled);
+  assert.ok(Math.abs(short.usd - 0.0075) < 1e-12);
+  assert.equal(short.credits, null);
+  const long = priceUsage('claude-haiku-5-5', { ...prompt, inputTokens: 100001 }, bundled);
+  assert.ok(Math.abs(long.usd - 0.0375005) < 1e-12);
+});
+
 function setup(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-catalog-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

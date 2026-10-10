@@ -5,7 +5,7 @@
       "https://developers.openai.com/api/docs/pricing",
       "https://platform.claude.com/docs/en/about-claude/pricing"
     ],
-    "effectiveAt": "2026-09-29"
+    "effectiveAt": "2026-10-10"
   },
   "models": {
     "gpt-5.5": {
@@ -17,6 +17,19 @@
       "creditsCachedInputPerMillion": 12.5,
       "creditsCacheWritePerMillion": 125,
       "creditsOutputPerMillion": 750,
+      "longContextThresholdTokens": 272000,
+      "longContextInputMultiplier": 2,
+      "longContextOutputMultiplier": 1.5
+    },
+    "gpt-6.1-sol": {
+      "inputPerMillion": 2,
+      "cachedInputPerMillion": 0.1,
+      "cacheWritePerMillion": 2.5,
+      "outputPerMillion": 10,
+      "creditsInputPerMillion": 50,
+      "creditsCachedInputPerMillion": 2.5,
+      "creditsCacheWritePerMillion": 62.5,
+      "creditsOutputPerMillion": 250,
       "longContextThresholdTokens": 272000,
       "longContextInputMultiplier": 2,
       "longContextOutputMultiplier": 1.5
@@ -150,7 +163,7 @@
     },
     "claude-sonnet-5-5": {
       "inputPerMillion": 2,
-      "cachedInputPerMillion": 0.2,
+      "cachedInputPerMillion": 0.1,
       "cacheWritePerMillion": 2.5,
       "cacheWrite1hPerMillion": 4,
       "outputPerMillion": 10
@@ -168,6 +181,16 @@
       "cacheWritePerMillion": 3.75,
       "cacheWrite1hPerMillion": 6,
       "outputPerMillion": 15
+    },
+    "claude-haiku-5-5": {
+      "inputPerMillion": 0.1,
+      "cachedInputPerMillion": 0.01,
+      "cacheWritePerMillion": 0.125,
+      "cacheWrite1hPerMillion": 0.2,
+      "outputPerMillion": 0.5,
+      "longContextThresholdTokens": 100000,
+      "longContextInputMultiplier": 5,
+      "longContextOutputMultiplier": 5
     },
     "claude-haiku-4-5": {
       "inputPerMillion": 1,

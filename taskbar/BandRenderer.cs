@@ -26,15 +26,28 @@ namespace AgentUsageTaskbar
 
         public Bitmap Render(UsageSnapshot snapshot, bool offline, bool lightTheme, float scale, int height)
         {
-            EnsureFonts(scale);
+            height = Math.Max(1, height);
+            scale = scale > 0 ? scale : 1;
             var foreground = lightTheme ? Color.FromArgb(28, 28, 28) : Color.FromArgb(245, 245, 245);
             var muted = lightTheme ? Color.FromArgb(110, 110, 110) : Color.FromArgb(170, 170, 170);
             var rows = BuildRows(snapshot, offline, foreground, muted);
+            EnsureFonts(scale);
 
-            using (var measure = new Bitmap(1, 1))
+            using (var measure = CreateBitmap(1, 1))
             using (var graphics = Graphics.FromImage(measure))
             {
+                graphics.PageUnit = GraphicsUnit.Pixel;
                 graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+                // Measure the actual strings: fallback fonts for Korean can be taller than Segoe UI.
+                var lineHeight = rows.SelectMany(row => row).Max(cell => MeasureSize(graphics, cell).Height);
+                for (var attempt = 0; attempt < 8; attempt++)
+                {
+                    var neededHeight = rows.Count * (lineHeight + 4f * scale);
+                    if (neededHeight <= height - 4f) break;
+                    scale *= Math.Max(1f, height - 4f) / neededHeight * 0.98f;
+                    EnsureFonts(scale);
+                    lineHeight = rows.SelectMany(row => row).Max(cell => MeasureSize(graphics, cell).Height);
+                }
                 // Columns align across rows so the numbers stay put while values change.
                 var columnCount = rows.Max(row => row.Count);
                 var widths = new float[columnCount];
@@ -49,15 +62,15 @@ namespace AgentUsageTaskbar
                 var padding = 6f * scale;
                 var width = (int)Math.Ceiling(padding * 2 + widths.Sum() + gap * Math.Max(0, columnCount - 1));
 
-                var bitmap = new Bitmap(Math.Max(width, 1), Math.Max(height, 1), PixelFormat.Format32bppArgb);
+                var bitmap = CreateBitmap(Math.Max(width, 1), height);
                 using (var canvas = Graphics.FromImage(bitmap))
                 {
+                    canvas.PageUnit = GraphicsUnit.Pixel;
                     // Alpha 1 keeps the whole band hit-testable without being visible.
                     canvas.Clear(Color.FromArgb(1, 0, 0, 0));
                     canvas.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
                     canvas.SmoothingMode = SmoothingMode.AntiAlias;
-                    var lineHeight = _font.GetHeight(canvas);
-                    var barHeight = Math.Max(2f, 3f * scale);
+                    var barHeight = 3f * scale;
                     var barGap = 1f * scale;
                     var rowHeight = lineHeight + barGap + barHeight;
                     var top = Math.Max(0f, (height - rowHeight * rows.Count) / 2f);
@@ -83,6 +96,14 @@ namespace AgentUsageTaskbar
                 }
                 return bitmap;
             }
+        }
+
+        private static Bitmap CreateBitmap(int width, int height)
+        {
+            // Coordinates and pixel fonts already include the monitor scale; never scale them twice.
+            var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+            bitmap.SetResolution(96f, 96f);
+            return bitmap;
         }
 
         private List<List<Cell>> BuildRows(UsageSnapshot snapshot, bool offline, Color foreground, Color muted)
@@ -173,7 +194,12 @@ namespace AgentUsageTaskbar
 
         private float Measure(Graphics graphics, Cell cell)
         {
-            return graphics.MeasureString(cell.Text, cell.Bold ? _boldFont : _font, PointF.Empty, StringFormat.GenericTypographic).Width;
+            return MeasureSize(graphics, cell).Width;
+        }
+
+        private SizeF MeasureSize(Graphics graphics, Cell cell)
+        {
+            return graphics.MeasureString(cell.Text, cell.Bold ? _boldFont : _font, PointF.Empty, StringFormat.GenericTypographic);
         }
 
         private void EnsureFonts(float scale)

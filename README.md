@@ -23,6 +23,9 @@ taskbar indicator (it targets .NET Framework 4.8, which ships with Windows).
 
 This starts the service, the taskbar indicator, and the dashboard at
 `localhost:47831`. No `npm install` is needed. Omit `-Open` to skip the browser.
+An existing monitor is reused unless its version or runtime files changed.
+The former Codex-only service is replaced automatically after verifying its
+listening process belongs to this checkout.
 
 ```powershell
 .\scripts\Ensure-Monitor.ps1 -NoTaskbar     # Service only
@@ -68,8 +71,8 @@ recalculates historical usage. Export/Import shares prices only.
 
 ## Development
 
-Run `npm test`. After updating, run `.\scripts\Start-Monitor.ps1` again (restarting the
-service) and `.\scripts\Start-Taskbar.ps1 -Restart`.
+Run `npm test`. After updating, run `.\scripts\Start-Monitor.ps1` again to load changed
+service sources and model prices, then `.\scripts\Start-Taskbar.ps1 -Restart` if needed.
 
 ## License and credits
 

@@ -27,6 +27,9 @@ One line per agent with usage in the last 30 days:
 
 The indicator polls `GET /api/taskbar` once per second. Text color follows the
 Windows light/dark setting.
+The band uses the visible strip below the working-area boundary, so compact
+taskbars do not hide the first row behind maximized windows. Fonts and gauges fit
+the available height and are rendered in pixels at the current monitor scale.
 
 ## Placement
 
