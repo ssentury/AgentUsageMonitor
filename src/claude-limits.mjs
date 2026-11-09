@@ -11,7 +11,7 @@ const WINDOW_LABELS = { five_hour: '5h', seven_day: '7d', seven_day_opus: '7d Op
 const WINDOW_MINUTES = { five_hour: 300, seven_day: 10080, seven_day_opus: 10080, seven_day_sonnet: 10080 };
 
 export const NEEDS_CLI_MESSAGE =
-  'Claude CLI login has expired. Run `claude` once in a terminal; usage percentages recover automatically.';
+  'Claude CLI login has expired. Run `claude` once in a terminal (or `claude auth login` if the refresh token also expired); usage percentages recover automatically.';
 
 // Polls the (unofficial) Claude plan usage endpoint with the Claude Code CLI's OAuth token.
 // The token is only read and sent to api.anthropic.com; it is never refreshed, logged, or stored.

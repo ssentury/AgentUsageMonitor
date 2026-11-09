@@ -18,7 +18,7 @@ One line per agent with usage in the last 30 days:
 | `$0.30/30s` | API-equivalent USD over the trailing 30 seconds |
 | `오늘 $6.29` | API-equivalent USD since local midnight (`+` = some models have no price) |
 | `5h 42%` / `7d 18%` | Plan usage windows; yellow from 60%, red from 80% |
-| `CLI 로그인 필요` | Claude plan usage could not be read; run `claude` once in a terminal |
+| `CLI 로그인 필요` | Claude plan usage could not be read; run `claude` once in a terminal, or `claude auth login` after ~30 days without CLI use |
 
 - Hover: details with reset times and model-specific windows (for example `7d Opus`).
 - Left click: open the dashboard.

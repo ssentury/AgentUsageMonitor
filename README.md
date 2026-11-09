@@ -53,7 +53,9 @@ See [TASKBAR.md](TASKBAR.md) for indicator behavior and placement options.
 - **Claude plan usage is an unofficial endpoint** and may change. When the stored CLI
   token has expired (for example if you only use the desktop app), the indicator
   shows *CLI 로그인 필요*; run `claude` once in a terminal and the percentages
-  recover automatically.
+  recover automatically. If the refresh token has also expired (about 30 days without
+  CLI use), the CLI clears the stored tokens and `claude` alone no longer works; run
+  `claude auth login` instead.
 - The local database contains prompt excerpts and project paths; keep it private.
 - Costs use the rate card and reflect recorded usage, not subscription charges.
   Claude Code writes usage when each response completes, so live cost lags slightly.
